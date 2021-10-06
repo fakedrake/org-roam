@@ -291,12 +291,26 @@ If UPDATE-P is non-nil, first remove the file in the database."
          (dolist (fn fns)
            (funcall fn)))))))
 
+(defun org-roam--parse-link-like (obj)
+  "Create an org-mode link element out of a link-like element."
+  (with-temp-buffer
+    (save-excursion (insert (org-element-property :value obj)))
+    (org-element-link-parser)))
+
+(defun org-roam--link-like-p (obj)
+  "Return non-nil if the org-element provided is essentially a
+link. At the moment this supports #+transclude: ... statements."
+  (and (eq 'keyword (org-element-type link))
+       (or (string= (org-element-property :key link) "TRANSCLUDE"))))
+
 (defun org-roam-db-map-links (info fns)
   "Run FNS over all links in the current buffer.
 INFO is the org-element parsed buffer."
   (org-with-point-at 1
-    (org-element-map info 'link
+    (org-element-map info '(link keyword)
       (lambda (link)
+        (when (org-roam--link-like-p link)
+          (setq link (org-roam--parse-link-like link)))
         (dolist (fn fns)
           (funcall fn link))))))
 
