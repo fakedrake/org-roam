@@ -300,8 +300,8 @@ If UPDATE-P is non-nil, first remove the file in the database."
 (defun org-roam--link-like-p (obj)
   "Return non-nil if the org-element provided is essentially a
 link. At the moment this supports #+transclude: ... statements."
-  (and (eq 'keyword (org-element-type link))
-       (or (string= (org-element-property :key link) "TRANSCLUDE"))))
+  (and (eq 'keyword (org-element-type obj))
+       (or (string= (org-element-property :key obj) "TRANSCLUDE"))))
 
 (defun org-roam-db-map-links (info fns)
   "Run FNS over all links in the current buffer.
