@@ -68,6 +68,7 @@ Kills the buffer if KEEP-BUF-P is nil, and FILE is not yet visited."
   (declare (indent 2) (debug t))
   `(let* (new-buf
           (auto-mode-alist nil)
+          (find-file-hook nil)
           (buf (or (and (not ,file)
                         (current-buffer)) ;If FILE is nil, use current buffer
                    (find-buffer-visiting ,file) ; If FILE is already visited, find buffer
@@ -127,9 +128,13 @@ value (possibly nil). Adapted from `s-format'."
                  (let ((v (progn
                             (set-match-data saved-match-data)
                             (funcall replacer var default-val))))
-                   (if v (format "%s" v) (signal 'org-roam-format-resolve md)))
+                   (if v
+                       (format (apply #'propertize "%s" (text-properties-at 0 var)) v)
+                     (signal 'org-roam-format-resolve md)))
                (set-match-data replacer-match-data))))
-         template
+         (if (functionp template)
+             (funcall template)
+           template)
          ;; Need literal to make sure it works
          t t)
       (set-match-data saved-match-data))))
@@ -223,6 +228,41 @@ If BOUND, scan up to BOUND bytes of the buffer."
       (when (re-search-forward re bound t)
         (buffer-substring-no-properties (match-beginning 1) (match-end 1))))))
 
+(defun org-roam-end-of-meta-data (&optional full)
+  "Like `org-end-of-meta-data', but supports file-level metadata.
+
+When optional argument FULL is t, also skip planning information,
+clocking lines and any kind of drawer.
+
+When FULL is non-nil but not t, skip planning information,
+properties, clocking lines and logbook drawers."
+  (org-back-to-heading-or-point-min t)
+  ;; Skip planning information.
+  (when (looking-at-p org-planning-line-re) (forward-line))
+  ;; Skip property drawer.
+  (when (looking-at org-property-drawer-re)
+    (goto-char (match-end 0))
+    (forward-line))
+  ;; When FULL is not nil, skip more.
+  (when (and full (not (org-at-heading-p)))
+    (catch 'exit
+      (let ((end (save-excursion (outline-next-heading) (point)))
+            (re (concat "[ \t]*$" "\\|" org-clock-line-re)))
+        (while (not (eobp))
+          (cond ;; Skip clock lines.
+           ((looking-at-p re) (forward-line))
+           ;; Skip logbook drawer.
+           ((looking-at-p org-logbook-drawer-re)
+            (if (re-search-forward "^[ \t]*:END:[ \t]*$" end t)
+                (forward-line)
+              (throw 'exit t)))
+           ;; When FULL is t, skip regular drawer too.
+           ((and (eq full t) (looking-at-p org-drawer-regexp))
+            (if (re-search-forward "^[ \t]*:END:[ \t]*$" end t)
+                (forward-line)
+              (throw 'exit t)))
+           (t (throw 'exit t))))))))
+
 (defun org-roam-set-keyword (key value)
   "Set keyword KEY to VALUE.
 If the property is already set, it's value is replaced."
@@ -232,14 +272,13 @@ If the property is already set, it's value is replaced."
           (if (string-blank-p value)
               (kill-whole-line)
             (replace-match (concat " " value) 'fixedcase nil nil 1))
-        (while (and (not (eobp))
-                    (looking-at "^[#:]"))
-          (if (save-excursion (end-of-line) (eobp))
-              (progn
-                (end-of-line)
-                (insert "\n"))
-            (forward-line)
-            (beginning-of-line)))
+        (org-roam-end-of-meta-data)
+        (if (save-excursion (end-of-line) (eobp))
+            (progn
+              (end-of-line)
+              (insert "\n"))
+          (forward-line)
+          (beginning-of-line))
         (insert "#+" key ": " value "\n")))))
 
 (defun org-roam-erase-keyword (keyword)
@@ -263,6 +302,30 @@ Both, VAL and PROP are strings."
     val))
 
 (defun org-roam-remove-property (prop &optional val)
+  "Remove VAL value from PROP property for the node at point.
+Both VAL and PROP are strings.
+
+If VAL is not specified, user is prompted to select a value."
+  (let* ((p (org-entry-get (point) prop))
+         (lst (when p (split-string-and-unquote p)))
+         (prop-to-remove (or val (completing-read "Remove: " lst)))
+         (lst (delete prop-to-remove lst)))
+    (if lst
+        (org-set-property prop (combine-and-quote-strings lst))
+      (org-delete-property prop))
+    prop-to-remove))
+
+(defun org-roam-property-add (prop val)
+  "Add VAL value to PROP property for the node at point.
+Both, VAL and PROP are strings."
+  (let* ((p (org-entry-get (point) prop))
+         (lst (when p (split-string-and-unquote p)))
+         (lst (if (memq val lst) lst (cons val lst)))
+         (lst (seq-uniq lst)))
+    (org-set-property prop (combine-and-quote-strings lst))
+    val))
+
+(defun org-roam-property-remove (prop &optional val)
   "Remove VAL value from PROP property for the node at point.
 Both VAL and PROP are strings.
 
